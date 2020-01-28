@@ -41,7 +41,7 @@ func TestItems_InsertAt(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.i.InsertAt(tt.args.item, tt.args.index)
+			tt.i.insertAt(tt.args.item, tt.args.index)
 			if !reflect.DeepEqual(tt.i, tt.want) {
 				t.Errorf("Items should be= %v(len=%d),but  %v(lend=%d)", tt.want, len(tt.want), tt.i, len(tt.i))
 			}
@@ -81,8 +81,8 @@ func TestItems_RemoveAt(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.i.RemoveAt(tt.args.index); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("RemoveAt() = %v, want %v", got, tt.want)
+			if got := tt.i.removeAt(tt.args.index); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("removeAt() = %v, want %v", got, tt.want)
 			}
 			if !reflect.DeepEqual(tt.i, tt.wantItems) {
 				t.Errorf("remain Items should be= %v,but remain %v", tt.i, tt.wantItems)
@@ -214,33 +214,8 @@ func TestNode_FindItem(t *testing.T) {
 				Items:  tt.fields.Items,
 				Branch: tt.fields.Branch,
 			}
-			if got := n.FindItem(tt.args.item); got != tt.want {
-				t.Errorf("FindItem() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestItems_print(t *testing.T) {
-	tests := []struct {
-		name string
-		i    Items
-		want string
-	}{
-		{
-			name: "",
-			i: Items{
-				{Value: 1},
-				{Value: 10},
-				{Value: 100},
-			},
-			want: "[ 1, 10, 100 ]",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.i.print(); got != tt.want {
-				t.Errorf("Print() = %v, want %v", got, tt.want)
+			if got := n.findItem(tt.args.item); got != tt.want {
+				t.Errorf("findItem() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -290,7 +265,7 @@ func TestNode_InsertAt(t *testing.T) {
 				Items:  tt.fields.Items,
 				Branch: tt.fields.Branch,
 			}
-			n.InsertAt(tt.args.index, tt.args.node)
+			n.insertAt(tt.args.index, tt.args.node)
 			if diff := cmp.Diff(n, tt.want); diff != "" {
 				t.Errorf("TestNode_InsertAt() diff = %v", diff)
 			}
@@ -372,6 +347,173 @@ func TestBranch_extract(t *testing.T) {
 			tt.b.extract(tt.args.index)
 			if !reflect.DeepEqual(tt.b, tt.want) {
 				t.Errorf("TestBranch_extract() got = %v, but want = %v", tt.b, tt.want)
+			}
+		})
+	}
+}
+
+func TestNode_Split(t *testing.T) {
+	type fields struct {
+		Items  Items
+		Branch Branch
+	}
+	type args struct {
+		index int
+	}
+	tests := []struct {
+		name   string
+		fields fields
+		args   args
+		want   *Item
+		want1  *Node
+		want2  *Node
+	}{
+		{
+			name: "[5_10_15]",
+			fields: fields{
+				Items: Items{{Value: 5}, {Value: 10}, {Value: 15}},
+				Branch: Branch{
+					{Items: Items{{Value: 4}}},
+					{Items: Items{{Value: 8}}},
+					{Items: Items{{Value: 12}}},
+					{Items: Items{{Value: 20}}},
+				},
+			},
+			args: args{
+				index: 1,
+			},
+			want: &Item{
+				Value: 10,
+			},
+			want1: &Node{
+				Items: Items{{Value: 15}},
+				Branch: Branch{
+					{Items: Items{{Value: 12}}},
+					{Items: Items{{Value: 20}}},
+				},
+			},
+			want2: &Node{
+				Items: Items{{Value: 5}, nil, nil},
+				Branch: Branch{
+					{Items: Items{{Value: 4}}},
+					{Items: Items{{Value: 8}}},
+					nil,
+					nil,
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			n := &Node{
+				Items:  tt.fields.Items,
+				Branch: tt.fields.Branch,
+			}
+			got, got1 := n.split(tt.args.index)
+			tt.want2.Branch = tt.want2.Branch[:tt.args.index+1]
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("split() got = %v, want %v", got, tt.want)
+			}
+			if !reflect.DeepEqual(got1, tt.want1) {
+				t.Errorf("split() got1 = %v, want %v", got1, tt.want1)
+			}
+			if !reflect.DeepEqual(n, tt.want2) {
+				t.Errorf("split() original node = %v, want %v", got1, tt.want1)
+			}
+		})
+	}
+}
+
+func TestNode_ShouldSplit(t *testing.T) {
+	type fields struct {
+		Items  Items
+		Branch Branch
+	}
+	type args struct {
+		i     int
+		limit int
+	}
+	tests := []struct {
+		name   string
+		fields fields
+		args   args
+		want   bool
+	}{
+		{
+			name: "",
+			fields: fields{
+				Items: Items{{Value: 2}, {Value: 4}, nil},
+				Branch: Branch{
+					{Items: Items{{Value: 1}, nil, nil}},
+					{Items: Items{{Value: 3}, nil, nil}},
+					{Items: Items{{Value: 5}, {Value: 8}, nil}},
+				},
+			},
+			args: args{
+				i:     2,
+				limit: 2,
+			},
+			want: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			n := &Node{
+				Items:  tt.fields.Items,
+				Branch: tt.fields.Branch,
+			}
+			if got := n.shouldSplit(tt.args.i, tt.args.limit); got != tt.want {
+				t.Errorf("shouldSplit() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNode_AppendItem(t *testing.T) {
+	type fields struct {
+		Items  Items
+		Branch Branch
+	}
+	type args struct {
+		item  *Item
+		limit int
+	}
+	tests := []struct {
+		name   string
+		fields fields
+		args   args
+		want   *Item
+	}{
+		{
+			name: "",
+			fields: fields{
+				Items: Items{{Value: 5}, {Value: 10}, {Value: 15}},
+				Branch: Branch{
+					{Items: Items{{Value: 1}, {Value: 2}}},
+					{Items: Items{{Value: 6}, {Value: 7}}},
+					{Items: Items{{Value: 13}, {Value: 14}}},
+					{Items: Items{{Value: 17}, {Value: 20}}},
+				},
+			},
+			args: args{
+				item: &Item{
+					Value: 3,
+				},
+				limit: 3,
+			},
+			want: &Item{
+				Value: 0,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			n := &Node{
+				Items:  tt.fields.Items,
+				Branch: tt.fields.Branch,
+			}
+			if got := n.AppendItem(tt.args.item, tt.args.limit); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("AppendItem() = %v, want %v", got, tt.want)
 			}
 		})
 	}

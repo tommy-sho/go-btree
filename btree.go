@@ -1,7 +1,6 @@
 package btree
 
 import (
-	"bytes"
 	"fmt"
 	"sort"
 )
@@ -24,7 +23,7 @@ func (i *Item) Equal(item *Item) bool {
 
 type Items []*Item
 
-func (i *Items) InsertAt(item *Item, index int) {
+func (i *Items) insertAt(item *Item, index int) {
 	// 枠を一個増やす
 	*i = append(*i, nil)
 
@@ -36,7 +35,7 @@ func (i *Items) InsertAt(item *Item, index int) {
 	(*i)[index] = item
 }
 
-func (i *Items) RemoveAt(index int) *Item {
+func (i *Items) removeAt(index int) *Item {
 	item := (*i)[index]
 	copy((*i)[index:], (*i)[index+1:])
 	(*i)[len(*i)-1] = nil
@@ -45,6 +44,7 @@ func (i *Items) RemoveAt(index int) *Item {
 	return item
 }
 
+// findItem - Itemsの中から検索対象のItemを検索する。なかった場合は、もっとも近く、小さいItemのindexを返す
 func (i *Items) findItem(item *Item) (index int, exist bool) {
 	index = sort.Search(len(*i), func(in int) bool {
 		return item.Less((*i)[in])
@@ -64,20 +64,6 @@ func (i *Items) extract(index int) {
 	}
 }
 
-func (i *Items) print() string {
-	var b bytes.Buffer
-	b.WriteString("[ ")
-	for n, item := range *i {
-		b.WriteString(fmt.Sprintf("%d", item.Value))
-		if n != len(*i)-1 {
-			b.WriteString(", ")
-		}
-	}
-	b.WriteString(" ]")
-
-	return b.String()
-}
-
 type Node struct {
 	Items  Items
 	Branch Branch
@@ -85,14 +71,23 @@ type Node struct {
 
 type Branch []*Node
 
-// FindItem - ノードの要素、Branchの中に指定されたItemがあるかをチェック
-func (n *Node) FindItem(item *Item) bool {
+func (b *Branch) InsertAt(index int, n *Node) {
+	*b = append(*b, nil)
+	if index < len(*b) {
+		copy((*b)[index+1:], (*b)[index:])
+	}
+
+	(*b)[index] = n
+}
+
+// findItem - ノードの要素、Branchの中に指定されたItemがあるかをチェック
+func (n *Node) findItem(item *Item) bool {
 	if _, ok := n.Items.findItem(item); ok {
 		return true
 	}
 
 	for _, cn := range n.Branch {
-		if cn.FindItem(item) {
+		if cn.findItem(item) {
 			return true
 		}
 	}
@@ -138,7 +133,39 @@ func (n *Node) Length() int {
 	return len(n.Items)
 }
 
-func (n *Node) InsertAt(index int, node *Node) {
+//insert - nodeにItemを挿入する。limitの数を超えていた場合、新しくNodeを作成する
+//Itemがもしあれば、Itemを入れ替え、入れ替えるまえのItemを返却する
+func (n *Node) insert(item *Item, limit int) *Item {
+	i, ok := n.Items.findItem(item)
+	if ok {
+		res := n.Items[i]
+		n.Items[i] = item
+		return res
+	}
+
+	if len(n.Branch) == 0 {
+		n.Items.insertAt(item, i)
+		return nil
+	}
+
+	if n.shouldSplit(i, limit) {
+		inTree := n.Items[i]
+		switch {
+		case item.Less(inTree):
+			// no change, we want first split node
+		case inTree.Less(item):
+			i++ // we want second split node
+		default:
+			out := n.Items[i]
+			n.Items[i] = item
+			return out
+		}
+	}
+
+	return n.Branch[i].insert(item, limit)
+}
+
+func (n *Node) insertAt(index int, node *Node) {
 	n.Branch = append(n.Branch, nil)
 	if index < len(n.Branch) {
 		copy(n.Branch[index+1:], n.Branch[index:])
@@ -147,20 +174,34 @@ func (n *Node) InsertAt(index int, node *Node) {
 	n.Branch[index] = node
 }
 
-//
-//func (n *Node) Split(index int) (Item, *Node) {
-//	items := n.Items
-//	newNode := new(Node)
-//	newNode.Items = append(newNode.Items, items[index+1:]...)
-//
-//	n.Items.extract(index)
-//	if len(n.Branch) > 0 {
-//		newNode.Branch = append(newNode.Branch, n.Branch[index+1:]...)
-//		n.Branch.(i + 1)
-//	}
-//}
+func (n *Node) split(index int) (*Item, *Node) {
+	// ちょうど分割の真ん中にあるItem
+	item := n.Items[index]
 
-var nilChildren = make(Branch, 16)
+	newNode := new(Node)
+	newNode.Items = append(newNode.Items, n.Items[index+1:]...)
+
+	n.Items.extract(index)
+	if len(n.Branch) > 0 {
+		newNode.Branch = append(newNode.Branch, n.Branch[index+1:]...)
+		n.Branch.extract(index + 1)
+	}
+
+	return item, newNode
+}
+
+func (n *Node) shouldSplit(i, limit int) bool {
+	if len(n.Branch[i].Items) <= limit {
+		return false
+	}
+
+	// limitを超えて分割すべきだった場合、分割してBranchに登録
+	center, newNode := n.Branch[i].split(limit / 2)
+	n.Items.insertAt(center, i)
+	n.Branch.InsertAt(i+1, newNode)
+
+	return true
+}
 
 func (b *Branch) extract(index int) {
 	*b = (*b)[:index]
@@ -170,11 +211,6 @@ func (b *Branch) extract(index int) {
 		(*b)[i] = nil
 	}
 }
-
-//func (n *Node) find(value *Item) *Item {
-//	i, found := n.Items.findItem(value)
-//	if found
-//}
 
 type Btree struct {
 	m    int
@@ -188,7 +224,8 @@ func NewBTree(m int) (*Btree, error) {
 	}
 
 	return &Btree{
-		m: m,
+		m:    m,
+		Root: nil,
 	}, nil
 }
 
@@ -196,35 +233,36 @@ func (b *Btree) maxItemNum() int {
 	return b.m*2 - 1
 }
 
-//func (b *Btree) InsertItem(item *Item) (*Item, bool, error) {
-//	if item == nil {
-//		return nil, false, fmt.Errorf("nil item is unacceptable")
-//	}
-//
-//	if b.Root == nil {
-//		b.Root = new(Node)
-//		b.Root.Items = append(b.Root.Items, item)
-//		b.num++
-//	} else {
-//		if len(b.Root.Items) > b.maxItemNum() {
-//			item2, second := b.Root.split(b.maxItemNum() / 2)
-//			old := b.Root
-//
-//			b.Root = new(Node)
-//			b.Root.Items = append(b.Root.Items, item2)
-//			b.Root.Branch = append(b.Root.Branch, old, second)
-//		}
-//	}
-//
-//	res := b.Root.InsertItem(b.maxItemNum(), item)
-//	if res == nil {
-//		b.num++
-//		return res, false, nil
-//	}
-//
-//	return res, true, nil
-//}
+func (b *Btree) InsertOrUpdateItem(item *Item) (*Item, error) {
+	if item == nil {
+		return nil, fmt.Errorf("nil item is unacceptable")
+	}
+
+	// RootのNodeがまだなければ作成
+	if b.Root == nil {
+		b.Root = &Node{}
+		b.Root.Items = append(b.Root.Items, item)
+		b.num++
+	} else {
+		// Rootに収まらなくなったら分割する
+		if len(b.Root.Items) >= b.maxItemNum() {
+			item2, second := b.Root.split(b.maxItemNum() / 2)
+			old := b.Root
+
+			b.Root = new(Node)
+			b.Root.Items = append(b.Root.Items, item2)
+			b.Root.Branch = append(b.Root.Branch, old, second)
+		}
+	}
+
+	res := b.Root.insert(item, b.maxItemNum())
+	if res == nil {
+		b.num++
+	}
+
+	return res, nil
+}
 
 func (b *Btree) Find(item *Item) bool {
-	return b.Root.FindItem(item)
+	return b.Root.findItem(item)
 }
